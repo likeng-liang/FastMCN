@@ -1,0 +1,398 @@
+#+TITLE: dataloader
+#+KEYWORDS:
+#+AUTHOR: chongliang
+#+DATE: <2021-07-11 Sun>
+#+EMAIL: likeng.liang@qq.com
+#+OPTIONS: ^:{}
+#+STARTUP: overview indent
+
+* Import
+
+#+BEGIN_SRC python
+  from itertools import chain, count
+  import torch
+  import numpy as np
+  from torch.utils.data import Dataset, DataLoader
+  from utils.func import sparse_n_word
+  from torch.nn.utils.rnn import pad_sequence
+#+END_SRC
+
+* YieldData
+
+#+BEGIN_SRC python
+  class YieldData():
+      def __init__(self, dataset, **kargs):
+          self.data_loader = DataLoader(dataset, **kargs)
+          self.yield_data = self.yield_data_fn()
+
+      def yield_data_fn(self):
+          while True:
+              for data in self.data_loader:
+                  yield data
+
+      def __call__(self):
+          return self.yield_data.__next__()
+#+END_SRC
+
+* Char2Token2MentionDS
+
+#+BEGIN_SRC python
+  class Char2Token2MentionDS(Dataset):
+      def __init__(
+          self,
+          data,
+          batch_size,
+          max_size_for_each_concept,
+          char_code_max_lens,
+          device="cuda",
+      ):
+          self.__dict__.update(locals())
+          self.data = list(data.values())
+          self.len = len(self.data)
+          self.idx = np.array(range(self.len))
+          self.gen_dt = self.__gen_dt_fn()
+          self.gen_data = self.gen_data_fn_not_pad
+          self.yield_data = self.yield_data_helper()
+
+      def __gen_dt_fn(self):
+          while True:
+              np.random.shuffle(self.idx)
+              for i in self.idx:
+                  dt = self.data[i]
+                  idx = list(range(len(dt)))
+                  np.random.shuffle(idx)
+                  n_names = np.min([len(dt), self.max_size_for_each_concept])
+                  yield [dt[i] for i in idx[:n_names]], n_names
+
+      def gen_data_helper(self, dt, n_names, n_names_sum):
+          new_dt, new_n_names = self.gen_dt.__next__()
+          dt += new_dt
+          n_names += [new_n_names]
+          n_names_sum += new_n_names
+          if n_names_sum < self.batch_size:
+              return self.gen_data_helper(dt, n_names, n_names_sum)
+          else:
+              batch_data = {
+                  k: list(v)
+                  for k, v in zip(dt[0].keys(), zip(*[i.values() for i in dt]))
+              }
+              return batch_data, torch.tensor(n_names)
+
+      def re_encode(self, word_code, char_code):
+          word_list = list(chain(*word_code))
+          word_unique = np.unique(word_list)
+          # no pad_idx for word, so count(0)
+          word_map = {k: v for k, v in zip(word_unique, count(0))}
+          new_word_code = torch.tensor([word_map[i] for i in word_list])
+          word_code_map = {
+              w: c for w, c in zip(chain(*word_code), chain(*char_code))
+          }
+          new_char_code = torch.tensor([word_code_map[w] for w in word_unique])
+          return new_char_code, new_word_code
+
+      def gen_data_fn(self):
+          batch_data, n_names = self.gen_data_helper([], [], 0)
+          n_words = np.array(batch_data["n_word"])
+          char_code, word_code = self.re_encode(
+              batch_data["word_code"], batch_data["char_code"]
+          )
+          return char_code, word_code, n_words, n_names
+
+      @staticmethod
+      def split_char_code(char_code, char_code_max_lens):
+          """char_code must be sorted."""
+          char_code_len = (char_code > 0).sum(-1).long()
+          char_code_len_p = char_code_len <= char_code_max_lens
+          split_n = torch.logical_xor(
+              char_code_len_p[:-1], char_code_len_p[1:]
+          ).sum(-1)
+          split_n = split_n[split_n > 0]
+          # char_code = [
+          #     code[:, code.sum(0) > 0] for code in char_code.split(split_n)
+          # ]
+          # char_code_len = char_code_len.split(split_n)
+          return char_code, char_code_len, split_n
+
+      def gen_loss_args(self, n_names):
+          label = torch.cat(
+              [torch.ones(n) * l for l, n in zip(range(len(n_names)), n_names)]
+          )
+          dt_size = n_names.sum()
+          label_range = (
+              n_names.cumsum(-1).repeat([dt_size, 1]).t()
+          )
+          concept_mask_not = label.unsqueeze(0) == label.unsqueeze(-1)
+          concept_mask = concept_mask_not.logical_not()
+          loss_args = {
+              "concept_mask": concept_mask,
+              "concept_mask_not": concept_mask_not,
+              "label_range": label_range,
+              "label": label,
+          }
+          return loss_args
+
+      def gen_data_fn_not_pad(self):
+          char_code, word_code, n_words, n_names = self.gen_data_fn()
+          n_word_spm_args = sparse_n_word(n_words)
+          char_code, char_code_len, split_n = self.split_char_code(
+              char_code, self.char_code_max_lens
+          )
+          forward_args = {
+              "char_code": char_code,
+              "char_len": char_code_len,
+              "token_code": word_code,
+              "n_word_spm_args": n_word_spm_args,
+              "split_n": split_n,
+          }
+          loss_args = self.gen_loss_args(n_names)
+          return forward_args, loss_args, n_names
+
+      def yield_data_helper(self):
+          while True:
+              yield self.gen_data()
+
+      def __getitem__(self, index):
+          return self.yield_data.__next__()
+
+      def __len__(self):
+          return self.len
+
+      def post_process(self, forward_args, loss_args, n_names):
+          token_spm_args = forward_args.pop("n_word_spm_args")
+          token_spm = torch.sparse.FloatTensor(
+              token_spm_args["indices"].squeeze(0),
+              token_spm_args["values"].squeeze(0),
+              [i.item() for i in token_spm_args["size"]],
+          ).to(self.device)
+          split_n = forward_args.pop("split_n")[0].tolist()
+          forward_args_new = {
+              k: v.squeeze(0).to(self.device)
+              if k == "token_code"
+              else v.squeeze(0).split(split_n)
+              for k, v in forward_args.items()
+          }
+          forward_args_new["char_code"] = [
+              t.to(self.device) for t in forward_args_new["char_code"]
+          ]
+          forward_args_new["token_spm"] = token_spm
+          loss_args_new = {
+              k: v.squeeze(0).to(self.device) for k, v in loss_args.items()
+          }
+          n_concepts = n_names.shape[1]
+          return forward_args_new, loss_args_new, n_concepts
+#+END_SRC
+
+* Char2Token2MentionCEDS
+
+#+BEGIN_SRC python
+  class Char2Token2MentionCEDS(Dataset):
+      def __init__(
+          self,
+          data,
+          batch_size,
+          max_size_for_each_concept,
+          char_code_max_lens,
+          device="cuda",
+      ):
+          self.__dict__.update(locals())
+          self.data = list(data.values())
+          self.len = len(self.data)
+          self.idx = np.array(range(self.len))
+          self.gen_dt = self.__gen_dt_fn()
+          self.gen_data = self.gen_data_fn_not_pad
+          self.yield_data = self.yield_data_helper()
+          self.concept_map = {c: idx for c, idx in zip(data, count(0))}
+
+      def __gen_dt_fn(self):
+          while True:
+              np.random.shuffle(self.idx)
+              for i in self.idx:
+                  dt = self.data[i]
+                  idx = list(range(len(dt)))
+                  np.random.shuffle(idx)
+                  n_names = np.min([len(dt), self.max_size_for_each_concept])
+                  yield [dt[i] for i in idx[:n_names]], n_names
+
+      def gen_data_helper(self, dt, n_names, n_names_sum):
+          new_dt, new_n_names = self.gen_dt.__next__()
+          dt += new_dt
+          n_names += [new_n_names]
+          n_names_sum += new_n_names
+          if n_names_sum < self.batch_size:
+              return self.gen_data_helper(dt, n_names, n_names_sum)
+          else:
+              batch_data = {
+                  k: list(v)
+                  for k, v in zip(dt[0].keys(), zip(*[i.values() for i in dt]))
+              }
+              return batch_data, torch.tensor(n_names)
+
+      def re_encode(self, word_code, char_code):
+          word_list = list(chain(*word_code))
+          word_unique = np.unique(word_list)
+          # no pad_idx for word, so count(0)
+          word_map = {k: v for k, v in zip(word_unique, count(0))}
+          new_word_code = torch.tensor([word_map[i] for i in word_list])
+          word_code_map = {
+              w: c for w, c in zip(chain(*word_code), chain(*char_code))
+          }
+          new_char_code = torch.tensor([word_code_map[w] for w in word_unique])
+          return new_char_code, new_word_code
+
+      def gen_data_fn(self):
+          batch_data, n_names = self.gen_data_helper([], [], 0)
+          n_words = np.array(batch_data["n_word"])
+          char_code, word_code = self.re_encode(
+              batch_data["word_code"], batch_data["char_code"]
+          )
+          label = [self.concept_map[c] for c in batch_data['concept']]
+          n_word_spm_args = sparse_n_word(n_words)
+          char_code, char_code_len, split_n = self.split_char_code(
+              char_code, self.char_code_max_lens
+          )
+          forward_args = {
+              "char_code": char_code,
+              "char_len": char_code_len,
+              "token_code": word_code,
+              "n_word_spm_args": n_word_spm_args,
+              "split_n": split_n,
+          }
+          loss_args = self.gen_loss_args(n_names)
+          return forward_args, loss_args, n_names
+
+          return char_code, word_code, n_words, label
+
+      @staticmethod
+      def split_char_code(char_code, char_code_max_lens):
+          """char_code must be sorted."""
+          char_code_len = (char_code > 0).sum(-1).long()
+          char_code_len_p = char_code_len <= char_code_max_lens
+          split_n = torch.logical_xor(
+              char_code_len_p[:-1], char_code_len_p[1:]
+          ).sum(-1)
+          split_n = split_n[split_n > 0]
+          # char_code = [
+          #     code[:, code.sum(0) > 0] for code in char_code.split(split_n)
+          # ]
+          # char_code_len = char_code_len.split(split_n)
+          return char_code, char_code_len, split_n
+
+      def gen_data_fn_not_pad(self):
+          char_code, word_code, n_words, n_names = self.gen_data_fn()
+
+      def yield_data_helper(self):
+          while True:
+              yield self.gen_data()
+
+      def __getitem__(self, index):
+          return self.yield_data.__next__()
+
+      def __len__(self):
+          return self.len
+
+      def post_process(self, forward_args, loss_args, n_names):
+          token_spm_args = forward_args.pop("n_word_spm_args")
+          token_spm = torch.sparse.FloatTensor(
+              token_spm_args["indices"].squeeze(0),
+              token_spm_args["values"].squeeze(0),
+              [i.item() for i in token_spm_args["size"]],
+          ).to(self.device)
+          split_n = forward_args.pop("split_n")[0].tolist()
+          forward_args_new = {
+              k: v.squeeze(0).to(self.device)
+              if k == "token_code"
+              else v.squeeze(0).split(split_n)
+              for k, v in forward_args.items()
+          }
+          forward_args_new["char_code"] = [
+              t.to(self.device) for t in forward_args_new["char_code"]
+          ]
+          forward_args_new["token_spm"] = token_spm
+          loss_args_new = {
+              k: v.squeeze(0).to(self.device) for k, v in loss_args.items()
+          }
+          n_concepts = n_names.shape[1]
+          return forward_args_new, loss_args_new, n_concepts
+#+END_SRC
+
+* Char2MentionDS
+
+#+BEGIN_SRC python
+  class Char2MentionDS(Char2Token2MentionDS):
+      def __init__(
+          self,
+          data,
+          batch_size,
+          max_size_for_each_concept,
+          char_code_max_lens,
+          device="cuda",
+      ):
+
+          super(Char2MentionDS, self).__init__(
+              data,
+              batch_size,
+              max_size_for_each_concept,
+              char_code_max_lens,
+              device,
+          )
+          self.gen_data = self.gen_data_fn
+          self.yield_data = self.yield_data_helper()
+
+      @staticmethod
+      def pad_and_sort(inputs):
+          inputs = pad_sequence(
+              [torch.tensor(i) for i in inputs],
+              batch_first=True,
+          )
+          lens = (inputs > 0).sum(-1)
+          lens_sorted, sort_idx = lens.sort(0, descending=False)
+          inputs_sorted = inputs[sort_idx]
+          _, unsort_idx = torch.sort(sort_idx, dim=0)
+          return inputs_sorted, lens_sorted, unsort_idx, sort_idx
+
+      @staticmethod
+      def compute_split_n(char_code_len, char_code_max_lens):
+          """char_code must be sorted."""
+          char_code_len_p = char_code_len <= char_code_max_lens
+          split_n = torch.logical_xor(
+              char_code_len_p[:-1], char_code_len_p[1:]
+          ).sum(-1)
+          split_n = split_n[split_n > 0]
+          return split_n
+
+      def gen_data_fn(self):
+          batch_data, n_names = self.gen_data_helper([], [], 0)
+          name_code, name_len, unsort_idx, _ = self.pad_and_sort(batch_data["name_code"])
+          split_n = self.compute_split_n(name_len, self.char_code_max_lens)
+          forward_args = {
+              "name_code": name_code,
+              "name_len": name_len,
+              "split_n": split_n,
+              "unsort_idx": unsort_idx
+          }
+          loss_args = self.gen_loss_args(n_names)
+          return forward_args, loss_args, n_names
+
+      def post_process(self, forward_args, loss_args, n_names):
+          split_n = forward_args.pop("split_n")[0].tolist()
+          forward_args_new = {
+              "name_len": forward_args["name_len"].squeeze(0).split(split_n),
+              "unsort_idx": forward_args["unsort_idx"].squeeze(0),
+              "name_code": forward_args["name_code"].squeeze(0).to(self.device).split(split_n),
+          }
+          loss_args_new = {
+              k: v.squeeze(0).to(self.device) for k, v in loss_args.items()
+          }
+          n_concepts = n_names.shape[1]
+          return forward_args_new, loss_args_new, n_concepts
+
+      def prepare_eval_data(self, dt):
+          name_code, name_len, _, sort_idx = self.pad_and_sort(dt['name_code'])
+          label = [dt["label"][i] for i in sort_idx]
+          dt_new = {
+              "name_code": name_code.to(self.device),
+              "name_len": name_len,
+              "label": label
+           }
+          return dt_new
+#+END_SRC

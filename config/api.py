@@ -1,0 +1,17 @@
+from argparse import ArgumentParser
+parser = ArgumentParser()
+parser.add_argument("--config", default="char2token2mention_bilstm")
+parser.add_argument("--data", default="cdr")
+parser.add_argument("--batch_size", default=64, type=int)
+parser.add_argument("--n_round", default=150, type=int)
+parser.add_argument("--seed", default=1, type=int)
+parser.add_argument("--emb_dim", default=512, type=int)
+parser.add_argument("--n_layer", default=2, type=int)
+parser.add_argument("--n_filter", default=256, type=int)
+parser.add_argument("--n_head", default=32, type=int)
+parser.add_argument("--eval_data", default="ncbi")
+parser.add_argument("--window", default=8, type=int)
+parser.add_argument("--pretrain_epoch", default=0, type=int)
+parser.add_argument("--lr", default=0.00001, type=float)
+
+args = parser.parse_args()

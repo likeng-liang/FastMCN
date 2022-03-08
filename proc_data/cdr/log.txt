@@ -1,0 +1,9 @@
+07/14/2021 09:22:25 |                            mentions | 79467
+07/14/2021 09:22:25 |                     unique mentions | 68858
+07/14/2021 09:22:25 |                     unique concepts | 11885
+07/14/2021 09:22:25 |                        unique names | 77037
+07/14/2021 09:22:25 |     unique names without stop_words | 77037
+07/14/2021 09:22:26 |                     vocabulary size | 32193
+07/14/2021 09:22:26 |                       char map size | 51
+07/14/2021 09:22:26 |                  max length of word | 32
+07/14/2021 09:22:27 |                  max length of name | 23

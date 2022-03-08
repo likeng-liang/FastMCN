@@ -1,0 +1,29 @@
+* Import
+
+  #+BEGIN_SRC python
+    import torch
+    from torch import nn
+    from torch.nn import Module
+  #+END_SRC
+
+* Call
+
+  #+BEGIN_SRC python
+    def call(inputs, func):
+        return func(inputs)
+  #+END_SRC
+
+* Dense
+
+#+BEGIN_SRC python
+  class Dense(Module):
+      def __init__(self, input_dim, output_dim, hook, bias=True):
+          super().__init__()
+          self.__dict__.update(locals())
+          self.linear = nn.Linear(input_dim, output_dim, bias=bias)
+
+      def forward(self, inputs):
+          ft = self.linear(inputs)
+          result = self.hook(ft)
+          return result
+#+END_SRC
