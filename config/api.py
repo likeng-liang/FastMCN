@@ -1,6 +1,6 @@
 from argparse import ArgumentParser
 parser = ArgumentParser()
-parser.add_argument("--config", default="char2token2mention_bilstm")
+parser.add_argument("--config", default="char2token2mention_svt")
 parser.add_argument("--data", default="cdr")
 parser.add_argument("--batch_size", default=64, type=int)
 parser.add_argument("--n_round", default=150, type=int)
