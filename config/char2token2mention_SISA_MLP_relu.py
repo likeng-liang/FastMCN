@@ -19,9 +19,13 @@ yield_train_data = dataset.YieldData(
     train_ds, **{"num_workers": 4, "pin_memory": True}
 )
 
-encoder_config['name'] = "SVTransformerEncoder"
+encoder_config['name'] = "SISAMLP"
 encoder_config['args']['n_head'] = args.n_head
 encoder_config['args']['max_len'] = MAX_CHARS
+encoder_config['args']['mlp_config'] = [
+    [16, "relu", False],
+    [1, "relu", False]
+]
 
 model_config = {
     "name": "Char2Token2Mention",
@@ -41,9 +45,9 @@ optimizer = call_method(torch.optim, optim_config)
 
 work_dir = "/".join(
     [
-        "./svt_train",
+        "./train",
         DATA,
-        f"/{model_config['name']}/{encoder_config['name']}",
+        f"/{model_config['name']}/{encoder_config['name']}_relu",
         "_".join(
             [
                 f"bs{BATCH_SIZE}",

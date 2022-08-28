@@ -5,5 +5,5 @@ See [[./config/api.py]]
 * Train
 
   #+BEGIN_SRC python
-    env CUDA_VISIBLE_DEVICES=0 python ./train_char2token2mention.py --config char2token2mention_svt --data cdr --batch_size=128 --n_round=100 --lr 0.0001
+    env CUDA_VISIBLE_DEVICES=0 python ./train_char2token2mention.py --config char2token2mention_SISA --data cdr --batch_size=128 --n_round=100 --lr 0.0001
   #+END_SRC

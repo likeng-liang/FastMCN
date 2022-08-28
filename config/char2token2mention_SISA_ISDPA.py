@@ -19,13 +19,9 @@ yield_train_data = dataset.YieldData(
     train_ds, **{"num_workers": 4, "pin_memory": True}
 )
 
-encoder_config['name'] = "SVTMLP"
+encoder_config['name'] = "SISAISDPA"
 encoder_config['args']['n_head'] = args.n_head
 encoder_config['args']['max_len'] = MAX_CHARS
-encoder_config['args']['mlp_config'] = [
-    [16, "tanh", False],
-    [1, "tanh", False]
-]
 
 model_config = {
     "name": "Char2Token2Mention",
@@ -45,7 +41,7 @@ optimizer = call_method(torch.optim, optim_config)
 
 work_dir = "/".join(
     [
-        "./svt_train",
+        "./train",
         DATA,
         f"/{model_config['name']}/{encoder_config['name']}",
         "_".join(

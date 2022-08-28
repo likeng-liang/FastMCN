@@ -1,7 +1,7 @@
 # Import
 
 
-# [[file:~/Works/char2token2mention/module/encoder.org::*Import][Import:1]]
+# [[file:encoder.org::*Import][Import:1]]
 import torch
 from torch import nn
 from torch.nn import Module
@@ -13,7 +13,7 @@ from utils.func import call_func
 # Function
 
 
-# [[file:~/Works/char2token2mention/module/encoder.org::*Function][Function:1]]
+# [[file:encoder.org::*Function][Function:1]]
 def mean_without_zero(tensor, n_not_zero, dim):
     return tensor.sum(dim=dim) / n_not_zero
 # Function:1 ends here
@@ -21,7 +21,7 @@ def mean_without_zero(tensor, n_not_zero, dim):
 # Modules
 
 
-# [[file:~/Works/char2token2mention/module/encoder.org::*Modules][Modules:1]]
+# [[file:encoder.org::*Modules][Modules:1]]
 class FeedForward(nn.Module):
     ''' A two-feed-forward-layer module '''
     def __init__(self, d_in, d_hid, dropout=0.1):
@@ -41,7 +41,7 @@ class FeedForward(nn.Module):
         return x
 # Modules:1 ends here
 
-# [[file:~/Works/char2token2mention/module/encoder.org::*Modules][Modules:2]]
+# [[file:encoder.org::*Modules][Modules:2]]
 class Dense(nn.Module):
     def __init__(self, input_dim, output_dim, activate_func, bias=True):
         """A linear layer and an activate function.
@@ -65,7 +65,7 @@ class Dense(nn.Module):
         return self.act_func(self.linear(inputs))
 # Modules:2 ends here
 
-# [[file:~/Works/char2token2mention/module/encoder.org::*Modules][Modules:3]]
+# [[file:encoder.org::*Modules][Modules:3]]
 class ComputeQKV(nn.Module):
     def __init__(self, n_head, word_vec_d, n_layer=3, bias=False):
         super().__init__()
@@ -84,7 +84,7 @@ class ComputeQKV(nn.Module):
 # BiLSTM
 
 
-# [[file:~/Works/char2token2mention/module/encoder.org::*BiLSTM][BiLSTM:1]]
+# [[file:encoder.org::*BiLSTM][BiLSTM:1]]
 class BiLSTM(Module):
     def __init__(self, vocab_size, emb_dim, n_layer, dropout=0.1, device="cuda"):
         super().__init__()
@@ -124,7 +124,7 @@ class BiLSTM(Module):
 # TextCNN
 
 
-# [[file:~/Works/char2token2mention/module/encoder.org::*TextCNN][TextCNN:1]]
+# [[file:encoder.org::*TextCNN][TextCNN:1]]
 class TextCNN(nn.Module):
     def __init__(self, vocab_size, emb_dim, n_filter, kernel_size=[2, 3, 4, 5], device="cuda"):
         super().__init__()
@@ -154,7 +154,7 @@ class TextCNN(nn.Module):
 # TextCNNV2
 
 
-# [[file:~/Works/char2token2mention/module/encoder.org::*TextCNNV2][TextCNNV2:1]]
+# [[file:encoder.org::*TextCNNV2][TextCNNV2:1]]
 class TextCNNV2(nn.Module):
     def __init__(self, vocab_size, emb_dim, n_filter, kernel_size=[2, 3, 4, 5], device="cuda"):
         super().__init__()
@@ -191,7 +191,7 @@ class TextCNNV2(nn.Module):
 # Transformer
 
 
-# [[file:~/Works/char2token2mention/module/encoder.org::*Transformer][Transformer:1]]
+# [[file:encoder.org::*Transformer][Transformer:1]]
 def gen_pos_emb(emb_dim, max_len):
     emb_dim_half = emb_dim >> 1
     freq = torch.pow(torch.tensor([1e4]), -1 / emb_dim_half).repeat(
@@ -394,11 +394,11 @@ class MHA(nn.Module):
         return emb
 # Transformer:1 ends here
 
-# SVT
+# SISA
 
 
-# [[file:~/Works/char2token2mention/module/encoder.org::*SVT][SVT:1]]
-class SVTransformerBPETokenV7Fast(nn.Module):
+# [[file:encoder.org::*SISA][SISA:1]]
+class SISA(nn.Module):
     def __init__(
         self,
         vocab_size,
@@ -430,7 +430,7 @@ class SVTransformerBPETokenV7Fast(nn.Module):
         self.char_qkv_layer = ComputeQKV(self.n_head, self.emb_dim)
         self.pos_qkv_layer = ComputeQKV(self.n_head, self.emb_dim)
         # sdpa: scaled dot product attention
-        self.sdpa_temperature = emb_dim ** 0.5
+        self.temperature = emb_dim ** 0.5
         self.sdpa_dropout = nn.Dropout(dropout)
         self.sdpa_bn_layer = nn.LayerNorm(emb_dim, eps=1e-5)
         # layers
@@ -470,18 +470,18 @@ class SVTransformerBPETokenV7Fast(nn.Module):
         # (vocab_size, n_head, emb_dim) -> (n_head, emb_dim, vocab_size)
         char_k = char_k.permute(1, -1, 0)
         # n_head, vocab_size, vocab_size
-        char_qk = (char_q @ char_k) / self.sdpa_temperature
+        char_qk = (char_q @ char_k) / self.temperature
         char_qk[:, :, self.pad_idx] = -1e9
         # (max_len, n_head, emb_dim) -> (n_head, max_len, emb_dim)
         pos_q = pos_q.transpose(0, 1)
         # (max_len, n_head, emb_dim) -> (n_head, emb_dim, max_len)
         pos_k = pos_k.permute(1, -1, 0)
         # (max_len, n_head, emb_dim) -> (1, n_head, max_len, emb_dim)
-        pos_qk = (pos_q @ pos_k).unsqueeze(0) / self.sdpa_temperature
+        pos_qk = (pos_q @ pos_k).unsqueeze(0) / self.temperature
         # n_head, vocab_size, max_len
         char_pos_qk = (
             (char_q @ pos_k) + (pos_q @ char_k).transpose(-1, -2)
-        ) / self.sdpa_temperature
+        ) / self.temperature
         # max_len, n_head, emb_dim -> 1, n_head, max_len, emb_dim
         pos_v = pos_v.transpose(0, 1).unsqueeze(0)
         return char_qk, pos_qk, char_pos_qk, char_v, pos_v
@@ -564,15 +564,15 @@ class SVTransformerBPETokenV7Fast(nn.Module):
             dim=0,
         )
         return token_ft
-# SVT:1 ends here
+# SISA:1 ends here
 
-# SVTransformerEncoder
+# TE
 
 # Transformer Encoder
 
 
-# [[file:~/Works/char2token2mention/module/encoder.org::*SVTransformerEncoder][SVTransformerEncoder:1]]
-class SVTransformerEncoder(nn.Module):
+# [[file:encoder.org::*TE][TE:1]]
+class TE(nn.Module):
     def __init__(
         self,
         vocab_size,
@@ -603,7 +603,7 @@ class SVTransformerEncoder(nn.Module):
         self.bn_layer0 = nn.LayerNorm(int(emb_dim), eps=1e-5)
         self.bn_layer1 = nn.LayerNorm(int(emb_dim), eps=1e-5)
         self.bn_layer2 = nn.LayerNorm(int(emb_dim), eps=1e-5)
-        self.sdpa_temperature = emb_dim ** 0.5
+        self.temperature = emb_dim ** 0.5
         self.sdpa_dropout = nn.Dropout(dropout)
         self.sdpa_bn_layer = nn.LayerNorm(int(emb_dim), eps=1e-5)
         self.sdpa_fc = nn.Linear(emb_dim * n_head, emb_dim)
@@ -634,7 +634,7 @@ class SVTransformerEncoder(nn.Module):
         inputs = inputs + self.pos[:, :max_len]
         # q: batch_size, n_head, max_len, h_dim
         q, k, v = self.compute_qkv(inputs)
-        qk = q @ k.transpose(-1, -2) / self.sdpa_temperature
+        qk = q @ k.transpose(-1, -2) / self.temperature
         qk = qk.masked_fill(attn_mask, float("-inf"))
         # n_words, n_head, max_len, max_len
         attn_score = self.sdpa_dropout(
@@ -642,8 +642,8 @@ class SVTransformerEncoder(nn.Module):
         )
         # n_words, n_head, max_len
         not_mask = attn_mask.logical_not().float()
-        not_mask_n_words = not_mask.sum([-1])
-        attn_score = (not_mask @ attn_score).squeeze(-2) / not_mask_n_words
+        n_words = not_mask.sum([-1])
+        attn_score = (not_mask @ attn_score).squeeze(-2) / n_words
         # outputs shape: n_words, n_head, emb_dim
         outputs = torch.einsum("whl, whld->whd", attn_score, v)
         outputs = self.sdpa_fc(outputs.reshape([outputs.size(0), -1]))
@@ -666,15 +666,15 @@ class SVTransformerEncoder(nn.Module):
         word_ft = self.feedforward(word_ft) + word_ft
         word_ft = self.bn_layer2(word_ft)
         return word_ft
-# SVTransformerEncoder:1 ends here
+# TE:1 ends here
 
-# SVTISDPA
+# SISAISDPA
 
 # Index scaled dot production attention
 
 
-# [[file:~/Works/char2token2mention/module/encoder.org::*SVTISDPA][SVTISDPA:1]]
-class SVTISDPA(nn.Module):
+# [[file:encoder.org::*SISAISDPA][SISAISDPA:1]]
+class SISAISDPA(nn.Module):
     def __init__(
         self,
         vocab_size,
@@ -703,7 +703,7 @@ class SVTISDPA(nn.Module):
         self.pos = self.get_pos(self.max_len, emb_dim).to(device)
         self.qkv_layer = nn.Linear(emb_dim, 3 * emb_dim * n_head, bias=False)
         # sdpa: scaled dot product attention
-        self.sdpa_temperature = emb_dim ** 0.5
+        self.temperature = emb_dim ** 0.5
         self.sdpa_dropout = nn.Dropout(dropout)
         self.sdpa_bn_layer = nn.LayerNorm(int(emb_dim), eps=1e-5)
         self.sdpa_fc = nn.Linear(emb_dim * n_head, emb_dim)
@@ -741,18 +741,18 @@ class SVTISDPA(nn.Module):
         # (vocab_size, n_head, emb_dim) -> (n_head, emb_dim, vocab_size)
         char_k = char_k.permute(1, -1, 0)
         # n_head, vocab_size, vocab_size
-        char_qk = (char_q @ char_k) / self.sdpa_temperature
+        char_qk = (char_q @ char_k) / self.temperature
         char_qk[:, :, self.pad_idx] = -1e9
         # (max_len, n_head, emb_dim) -> (n_head, max_len, emb_dim)
         pos_q = pos_q.transpose(0, 1)
         # (max_len, n_head, emb_dim) -> (n_head, emb_dim, max_len)
         pos_k = pos_k.permute(1, -1, 0)
         # (max_len, n_head, emb_dim) -> (1, n_head, max_len, emb_dim)
-        pos_qk = (pos_q @ pos_k).unsqueeze(0) / self.sdpa_temperature
+        pos_qk = (pos_q @ pos_k).unsqueeze(0) / self.temperature
         # n_head, vocab_size, max_len
         char_pos_qk = (
             (char_q @ pos_k) + (pos_q @ char_k).transpose(-1, -2)
-        ) / self.sdpa_temperature
+        ) / self.temperature
         # max_len, n_head, emb_dim -> 1, n_head, max_len, emb_dim
         pos_v = pos_v.transpose(0, 1).unsqueeze(0)
         return char_qk, pos_qk, char_pos_qk, char_v, pos_v
@@ -835,12 +835,12 @@ class SVTISDPA(nn.Module):
             dim=0,
         )
         return token_ft
-# SVTISDPA:1 ends here
+# SISAISDPA:1 ends here
 
-# SVTMLP
+# SISAMLP
 
-# [[file:~/Works/char2token2mention/module/encoder.org::*SVTMLP][SVTMLP:1]]
-class SVTMLP(nn.Module):
+# [[file:encoder.org::*SISAMLP][SISAMLP:1]]
+class SISAMLP(nn.Module):
     def __init__(
         self,
         vocab_size,
@@ -871,7 +871,7 @@ class SVTMLP(nn.Module):
         self.pos = self.get_pos(self.max_len, self.emb_dim).to(device)
         self.qkv_layer = ComputeQKV(self.n_head, self.emb_dim)
         # sdpa: scaled dot product attention
-        self.sdpa_temperature = emb_dim ** 0.5
+        self.temperature = emb_dim ** 0.5
         self.sdpa_dropout = nn.Dropout(dropout)
         self.sdpa_bn_layer = nn.LayerNorm(emb_dim, eps=1e-5)
         # layers
@@ -911,18 +911,18 @@ class SVTMLP(nn.Module):
         # (vocab_size, n_head, emb_dim) -> (n_head, emb_dim, vocab_size)
         char_k = char_k.permute(1, -1, 0)
         # n_head, vocab_size, vocab_size
-        char_qk = (char_q @ char_k) / self.sdpa_temperature
+        char_qk = (char_q @ char_k) / self.temperature
         char_qk[:, :, self.pad_idx] = -1e9
         # (max_len, n_head, emb_dim) -> (n_head, max_len, emb_dim)
         pos_q = pos_q.transpose(0, 1)
         # (max_len, n_head, emb_dim) -> (n_head, emb_dim, max_len)
         pos_k = pos_k.permute(1, -1, 0)
         # (max_len, n_head, emb_dim) -> (1, n_head, max_len, emb_dim)
-        pos_qk = (pos_q @ pos_k).unsqueeze(0) / self.sdpa_temperature
+        pos_qk = (pos_q @ pos_k).unsqueeze(0) / self.temperature
         # n_head, vocab_size, max_len
         char_pos_qk = (
             (char_q @ pos_k) + (pos_q @ char_k).transpose(-1, -2)
-        ) / self.sdpa_temperature
+        ) / self.temperature
         # max_len, n_head, emb_dim -> 1, n_head, max_len, emb_dim
         pos_v = pos_v.transpose(0, 1).unsqueeze(0)
         return char_qk, pos_qk, char_pos_qk, char_v, pos_v
@@ -1005,4 +1005,4 @@ class SVTMLP(nn.Module):
             dim=0,
         )
         return token_ft
-# SVTMLP:1 ends here
+# SISAMLP:1 ends here

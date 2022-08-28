@@ -19,7 +19,7 @@ yield_train_data = dataset.YieldData(
     train_ds, **{"num_workers": 4, "pin_memory": True}
 )
 
-encoder_config['name'] = "SVTransformerBPETokenV7Fast"
+encoder_config['name'] = "SISAMLP"
 encoder_config['args']['n_head'] = args.n_head
 encoder_config['args']['max_len'] = MAX_CHARS
 encoder_config['args']['mlp_config'] = [
@@ -53,7 +53,7 @@ work_dir = "/".join(
                 f"bs{BATCH_SIZE}",
                 f"head{encoder_config['args']['n_head']}",
                 f"emb{encoder_config['args']['emb_dim']}",
-                f"seed{args.seed}_{DEVICE}",
+                f"seed{args.seed}",
             ]
         ),
     ]
